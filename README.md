@@ -20,4 +20,5 @@ M
 ```txt
 P
 ```
-
+### Imagem de exemplo:
+<img width="393" height="382" alt="tela do mapa" src="https://github.com/geeyk/cpp_endgame/blob/main/material/tela%20do%20mapa.png?raw=true" />

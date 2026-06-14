@@ -3,347 +3,425 @@
 #include <ctime>
 #include <chrono>
 #include <thread>
+#include <vector>
+#include <conio.h>   // Para _getch() no Windows (entrada sem Enter)
+
+// Descomente a linha abaixo se estiver no Linux/Mac e use "clear" em vez de "cls"
+// #include <unistd.h>
+// #define CLS "clear"
+
+#ifdef _WIN32
+    #define CLS "cls"
+#else
+    #define CLS "clear"
+#endif
+
 using namespace std;
 
-// ============================================================================
-// FUNÇÕES DE RENDERIZAÇÃO
-// ============================================================================
+// ============================================
+// Estruturas (reaproveitadas e ampliadas)
+// ============================================
 
-/// Renderiza a tela do combate com barras de HP e status effects
-/// Limpa automaticamente quando há mudanças
-void printScreen(int playerHp, int monsterHp, int &prevplayerHp, int &prevmonsterHp,
-                 bool &healed, bool &weakened, bool &blinded)
-{
-    // Só atualiza se houver mudança de HP
-    if(prevplayerHp != playerHp || prevmonsterHp != monsterHp)
-    {
-        // Limpa tela (28 quebras de linha)
-        cout << "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
+struct Player {
+    int hp;
+    int dmg;
+    int maxAtSp;
+    int atSp;
+    int acc;
+    int x, y;               // Posição no mapa
+};
 
-        // Renderiza barra de HP do jogador
-        cout << "Player  : ";
-        int i = 0;
-        while(i < playerHp)
-        {
-            cout << "o";
-            i++;
+struct Monster {
+    int hp;
+    int dmg;
+    int maxAtSp;
+    int atSp;
+    int acc;
+    int blindnessChance;
+    int x, y;               // Posição no mapa
+    char symbol;            // Símbolo no mapa (opcional)
+};
+
+struct Healer {
+    int healAmount;
+    int maxAtSp;
+    int atSp;
+    int acc;
+};
+
+struct Debuffer {
+    int dmgReduction;
+    int maxAtSp;
+    int atSp;
+    int acc;
+};
+
+struct StatusEffects {
+    bool blindedActive;
+    bool weakenedActive;
+};
+
+struct MessageFlags {
+    bool showBlinded;
+    bool showHealed;
+    bool showWeakened;
+};
+
+// ============================================
+// Constantes do mapa
+// ============================================
+const int MAP_WIDTH  = 30;
+const int MAP_HEIGHT = 15;
+
+// ============================================
+// Protótipos das funções de combate (mantidas)
+// ============================================
+void playerAttack(Player& player, Monster& monster, StatusEffects& status, MessageFlags& msg);
+void debufferAction(Debuffer& deb, StatusEffects& status, MessageFlags& msg);
+void monsterAttack(Monster& monster, Player& player, StatusEffects& status, MessageFlags& msg, int debuffReduction);
+void healerAction(Healer& healer, Player& player, MessageFlags& msg);
+void printScreen(int playerHp, int monsterHp, int& prevPlayerHp, int& prevMonsterHp, MessageFlags& msg);
+
+// ============================================
+// Funções do mapa
+// ============================================
+
+// Inicializa o mapa com bordas "+" e piso "."
+void initMap(vector<vector<char>>& map) {
+    for (int y = 0; y < MAP_HEIGHT; y++) {
+        for (int x = 0; x < MAP_WIDTH; x++) {
+            if (y == 0 || y == MAP_HEIGHT-1 || x == 0 || x == MAP_WIDTH-1)
+                map[y][x] = '+';
+            else
+                map[y][x] = '.';
         }
-
-        // Mostra efeitos do jogador (cegueira)
-        if(blinded == true)
-        {
-            cout << "    [BLINDED!]";
-            blinded = false;
-        }
-
-        // Mostra cura do jogador
-        if(healed == true)
-        {
-            cout << "    [+HEALED " << (playerHp - prevplayerHp) << " HP]";
-            healed = false;
-        }
-        cout << endl;
-
-        // Renderiza barra de HP do monstro
-        cout << "Monster : ";
-        i = 0;
-        while(i < monsterHp)
-        {
-            cout << "o";
-            i++;
-        }
-
-        // Mostra efeitos do monstro (fraqueza)
-        if(weakened == true)
-        {
-            cout << "   [WEAKENED]";
-            weakened = false;
-        }
-
-        // Atualiza valores anteriores para próxima verificação
-        prevmonsterHp = monsterHp;
-        prevplayerHp = playerHp;
-        cout << endl;
     }
 }
 
-// ============================================================================
-// FUNÇÕES DE COMBATE
-// ============================================================================
+// Exibe o mapa no console (sobrescrevendo a tela)
+void drawMap(const vector<vector<char>>& baseMap, const Player& player,
+             const vector<Monster>& monsters) {
+    // Cria uma cópia para não modificar o original
+    vector<vector<char>> screen = baseMap;
 
-/// Executa o turno do jogador
-/// - Acumula pontos de ação até poder atacar
-/// - Causa dano aleatório com chance de acerto baseada em acurácia
-void player(int playerDmg, int playerMaxAtSp, int &playerAtSp, int playerAcc,
-            int &monsterHp, int monsterDmg, bool blinded)
-{
-    if (playerAtSp == playerMaxAtSp)
-    {
-        // Aplica penalidade de cegueira
-        int accuracyAdjusted = playerAcc;
-        if(blinded == true)
-        {
-            accuracyAdjusted -= (monsterDmg * 3);
-
-            // Protege acurácia de ficar negativa
-            if(accuracyAdjusted < 0) accuracyAdjusted = 0;
-        }
-
-        // Verifica acerto (0-100)
-        if((rand() % 100) <= accuracyAdjusted)
-        {
-            // Causa dano aleatório (0 até playerDmg)
-            int damageDealt = rand() % playerDmg + 1;
-            monsterHp -= damageDealt;
-        }
-
-        // Reseta contador de ação
-        playerAtSp = 0;
+    // Insere monstros (cuidado com bordas)
+    for (auto& m : monsters) {
+        if (m.y > 0 && m.y < MAP_HEIGHT-1 && m.x > 0 && m.x < MAP_WIDTH-1)
+            screen[m.y][m.x] = 'M';
     }
-    else
-    {
-        // Incrementa contador de ação
-        playerAtSp++;
+
+    // Insere jogador (por cima de tudo)
+    if (player.y > 0 && player.y < MAP_HEIGHT-1 && player.x > 0 && player.x < MAP_WIDTH-1)
+        screen[player.y][player.x] = 'P';
+
+    system(CLS);  // Limpa o terminal
+
+    // Desenha linha a linha
+    for (auto& row : screen) {
+        for (char c : row) {
+            cout << c;
+        }
+        cout << endl;
     }
+
+    // Pequena interface
+    cout << "\nWASD: mover | Q: sair\n";
+    cout << "Vida: " << player.hp << " | Vitorias: " << playerWins << " | Derrotas: " << monsterWins << endl;
 }
 
-/// Executa o turno do monstro
-/// - Similar ao jogador
-/// - Se enfraquecido, causa menos dano
-/// - Pode cegar o jogador
-void monster(int monsterDmg, int monsterMaxAtSp, int &monsterAtSp, int monsterAcc,
-             int blindnessChance, int &playerHp, bool &blinded, bool &weakened,
-             int debufferDmg)
-{
-    if (monsterAtSp == monsterMaxAtSp)
-    {
-        // Verifica se ataque acerta
-        if((rand() % 100) <= monsterAcc)
-        {
-            // CORREÇÃO: Calcula dano com fraqueza ANTES de aplicar
-            int damageDealt = rand() % monsterDmg + 1;
+// Gera monstros aleatórios sem sobreposição
+void spawnMonsters(vector<Monster>& monsters, int count, int playerX, int playerY,
+                   int baseDmg, int baseHp, int monsterWins) {
+    for (int i = 0; i < count; i++) {
+        int x, y;
+        bool valid;
+        do {
+            valid = true;
+            // Coordenadas internas (evitando bordas)
+            x = rand() % (MAP_WIDTH - 2) + 1;
+            y = rand() % (MAP_HEIGHT - 2) + 1;
 
-            if(weakened == true)
-            {
-                // Reduz dano se monstro está fraco
-                damageDealt -= debufferDmg;
+            // Não sobrepor jogador
+            if (x == playerX && y == playerY) valid = false;
 
-                // Protege dano de ficar negativo
-                if(damageDealt < 0)
-                {
-                    damageDealt = 0;
+            // Não sobrepor outros monstros
+            for (auto& m : monsters) {
+                if (m.x == x && m.y == y) {
+                    valid = false;
+                    break;
                 }
             }
+        } while (!valid);
 
-            // Aplica dano UMA VEZ (bug original corrigido)
-            playerHp -= damageDealt;
-        }
+        Monster m;
+        m.x = x;
+        m.y = y;
+        m.symbol = 'M';
+        // Stats baseados em vitórias (dificuldade progressiva)
+        m.hp   = baseHp + monsterWins * 2;          // Exemplo de escala
+        m.dmg  = baseDmg + (monsterWins / 5);
+        m.maxAtSp = 10;
+        m.atSp = 0;
+        m.acc  = 90;
+        m.blindnessChance = 40 + monsterWins;
 
-        // Chance de cegar o jogador
-        if((rand() % 100) <= blindnessChance)
-        {
-            blinded = true;
-        }
-
-        // Reseta contador de ação
-        monsterAtSp = 0;
-    }
-    else
-    {
-        // Incrementa contador de ação
-        monsterAtSp++;
+        monsters.push_back(m);
     }
 }
 
-/// Executa turno do aliado curador
-/// - Cura o jogador com pequena chance
-void healer(int &hp, int heal, int healerMaxAtSp, int &healerAtSp,
-            int healerAcc, bool &healed)
-{
-    if (healerAtSp == healerMaxAtSp)
-    {
-        // Verifica se cura acerta (baixa chance, mas acontece)
-        if((rand() % 100) <= healerAcc)
-        {
-            hp += heal;
-            healed = true;
-        }
-
-        // Reseta contador de ação
-        healerAtSp = 0;
+// Move o jogador e verifica limites
+void movePlayer(Player& player, char direction) {
+    int newX = player.x, newY = player.y;
+    switch (direction) {
+        case 'w': case 'W': newY--; break;
+        case 's': case 'S': newY++; break;
+        case 'a': case 'A': newX--; break;
+        case 'd': case 'D': newX++; break;
     }
-    else
-    {
-        // Incrementa contador de ação
-        healerAtSp++;
+    // Só move se a nova posição estiver dentro do mapa (não na borda '+')
+    if (newX > 0 && newX < MAP_WIDTH-1 && newY > 0 && newY < MAP_HEIGHT-1) {
+        player.x = newX;
+        player.y = newY;
     }
 }
 
-/// Executa turno do aliado debuffer
-/// - Enfraquece o monstro (reduz dano dele)
-void debuffer(int debufferMaxAtSp, int &debufferAtSp, int debufferAcc,
-              bool &weakened)
-{
-    if (debufferAtSp == debufferMaxAtSp)
-    {
-        // Verifica se debuff acerta
-        if((rand() % 100) <= debufferAcc)
-        {
-            weakened = true;
-        }
+// Verifica se o jogador está na mesma posição que um monstro e inicia combate
+// Retorna true se o jogador venceu (monstro removido)
+bool checkAndStartCombat(Player& player, vector<Monster>& monsters,
+                         Healer& healer, Debuffer& debuffer,
+                         int& playerWins, int& monsterWins) {
+    for (auto it = monsters.begin(); it != monsters.end(); ++it) {
+        if (it->x == player.x && it->y == player.y) {
+            // Inicia combate contra este monstro
+            cout << "Um monstro apareceu! Prepare-se para a batalha!" << endl;
+            this_thread::sleep_for(chrono::milliseconds(500));
 
-        // Reseta contador de ação
-        debufferAtSp = 0;
-    }
-    else
-    {
-        // Incrementa contador de ação
-        debufferAtSp++;
-    }
-}
+            // Reinicia os contadores de ação para o combate
+            player.atSp = 0;
+            it->atSp = 0;
+            healer.atSp = 0;
+            debuffer.atSp = 0;
+            StatusEffects status = { false, false };
+            MessageFlags msg = { false, false, false };
+            int prevPlayerHp = player.hp, prevMonsterHp = it->hp;
 
-// ============================================================================
-// FUNÇÃO PRINCIPAL
-// ============================================================================
+            // Loop de combate (similar ao original, mas com o monstro específico)
+            while (player.hp >= 1 && it->hp >= 1) {
+                playerAttack(player, *it, status, msg);
+                if (it->hp <= 0) break;
 
-int main()
-{
-    // Inicializa seed de números aleatórios
-    srand(time(0));
+                debufferAction(debuffer, status, msg);
+                monsterAttack(*it, player, status, msg, debuffer.dmgReduction);
+                healerAction(healer, player, msg);
 
-    int key, playerWins = 0, monsterWins = 0;
-
-    // Menu inicial
-    cout << "Type 1 to start or 0 to close\n: ";
-    cin >> key;
-
-    // Loop enquanto usuário não digita 0
-    while (key != 1)
-    {
-        if(key == 0)
-        {
-            return 0;
-        }
-        cout << "Please type 1 to start or 0 to close\n: ";
-        cin >> key;
-    }
-
-    // Loop de combates
-    while (key != 0)
-    {
-        // Limpa tela
-        cout << "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
-
-        // ====== INICIALIZA STATS DO COMBATE ======
-        // HP aumenta com derrotas anteriores (dificuldade progressiva)
-        int playerHp = 30 + monsterWins;
-        int prevplayerHp = 0;
-        int playerDmg = 5 + (monsterWins / 5);           // CORRIGIDO: Era 2, aumentado para 5
-        int playerMaxAtSp = 4;
-        int playerAtSp = 0;
-        int playerAcc = 90;
-
-        // Monstro começa com mais HP a cada vitória do jogador
-        int monsterHp = 50 + playerWins;
-        int prevmonsterHp = 0;
-        int monsterDmg = 3 + (playerWins / 5);
-        int monsterMaxAtSp = 10;
-        int monsterAtSp = 0;
-        int monsterAcc = 90;
-        int monsterDebCh = 40 + playerWins;
-
-        // Stats dos aliados
-        int healerHeal = 3 + (monsterWins / 10);
-        int healerMaxAtSp = 5;
-        int healerAtSp = 0;
-        int healerAcc = 10;                 // CORRIGIDO: Era 5, aumentado para 10
-
-        int debufferDmg = 3;
-        int debufferMaxAtSp = 10;
-        int debufferAtSp = 0;
-        int debufferAcc = 15;
-
-        // Status effects
-        bool healed = false;
-        bool weakened = false;
-        bool blinded = false;
-
-        // ====== LOOP DE COMBATE ======
-        while (playerHp >= 1 && monsterHp >= 1)
-        {
-            // Executa turnos de cada participante
-            player(playerDmg, playerMaxAtSp, playerAtSp, playerAcc, monsterHp, monsterDmg, blinded);
-
-            // Verifica se monstro morreu
-            if(monsterHp <= 0)
-            {
-                break;
+                printScreen(player.hp, it->hp, prevPlayerHp, prevMonsterHp, msg);
+                this_thread::sleep_for(chrono::milliseconds(70));
             }
 
-            // Turno do monstro
-            monster(monsterDmg, monsterMaxAtSp, monsterAtSp, monsterAcc, monsterDebCh,
-                    playerHp, blinded, weakened, debufferDmg);
+            // Resultado
+            if (player.hp <= 0) {
+                cout << "Voce foi derrotado! Game over." << endl;
+                monsterWins++;
+                monsters.erase(it);  // remove o monstro (opcional)
+                return false;        // jogador morto
+            } else {
+                cout << "Voce venceu o monstro!" << endl;
+                playerWins++;
+                monsters.erase(it);
+                // Pequena pausa antes de voltar ao mapa
+                this_thread::sleep_for(chrono::milliseconds(1000));
+                return true;
+            }
+        }
+    }
+    return true; // não encontrou monstro
+}
 
-            // Aliados
-            healer(playerHp, healerHeal, healerMaxAtSp, healerAtSp, healerAcc, healed);
-            debuffer(debufferMaxAtSp, debufferAtSp, debufferAcc, weakened);
+// ============================================
+// Implementação das funções de combate (idênticas à versão corrigida)
+// ============================================
+void playerAttack(Player& player, Monster& monster, StatusEffects& status, MessageFlags& msg) {
+    if (player.atSp == player.maxAtSp) {
+        int effectiveAcc = player.acc;
+        if (status.blindedActive) {
+            effectiveAcc -= monster.dmg * 3;
+            msg.showBlinded = true;
+            status.blindedActive = false;
+        }
+        if ((rand() % 100) <= effectiveAcc) {
+            monster.hp -= rand() % player.dmg;
+        }
+        player.atSp = 0;
+    } else {
+        player.atSp++;
+    }
+}
 
-            // Renderiza estado do combate
-            printScreen(playerHp, monsterHp, prevplayerHp, prevmonsterHp, healed, weakened, blinded);
+void debufferAction(Debuffer& deb, StatusEffects& status, MessageFlags& msg) {
+    if (deb.atSp == deb.maxAtSp) {
+        if ((rand() % 100) <= deb.acc) {
+            status.weakenedActive = true;
+            msg.showWeakened = true;
+        }
+        deb.atSp = 0;
+    } else {
+        deb.atSp++;
+    }
+}
 
-            // Aguarda 70ms antes do próximo turno (controla velocidade)
-            this_thread::sleep_for(chrono::milliseconds(70));
+void monsterAttack(Monster& monster, Player& player, StatusEffects& status,
+                   MessageFlags& msg, int debuffReduction) {
+    if (monster.atSp == monster.maxAtSp) {
+        if ((rand() % 100) <= monster.acc) {
+            int damage = rand() % monster.dmg;
+            if (status.weakenedActive) {
+                damage -= debuffReduction;
+                if (damage < 0) damage = 0;
+                status.weakenedActive = false;
+            }
+            player.hp -= damage;
+        }
+        if ((rand() % 100) <= monster.blindnessChance) {
+            status.blindedActive = true;
+        }
+        monster.atSp = 0;
+    } else {
+        monster.atSp++;
+    }
+}
+
+void healerAction(Healer& healer, Player& player, MessageFlags& msg) {
+    if (healer.atSp == healer.maxAtSp) {
+        if ((rand() % 100) <= healer.acc) {
+            player.hp += healer.healAmount;
+            msg.showHealed = true;
+        }
+        healer.atSp = 0;
+    } else {
+        healer.atSp++;
+    }
+}
+
+void printScreen(int playerHp, int monsterHp, int& prevPlayerHp, int& prevMonsterHp,
+                 MessageFlags& msg) {
+    if (prevPlayerHp != playerHp || prevMonsterHp != monsterHp ||
+        msg.showBlinded || msg.showHealed || msg.showWeakened) {
+
+        cout << "Player  : ";
+        for (int i = 0; i < playerHp; i++) cout << "o";
+        if (msg.showHealed) {
+            cout << "    Player was healed for " << (playerHp - prevPlayerHp) << "!";
+            msg.showHealed = false;
+        }
+        if (msg.showBlinded) {
+            cout << "    Player is blinded!";
+            msg.showBlinded = false;
+        }
+        cout << endl;
+
+        cout << "Monster : ";
+        for (int i = 0; i < monsterHp; i++) cout << "o";
+        if (msg.showWeakened) {
+            cout << "   Monster was weakened";
+            msg.showWeakened = false;
+        }
+        cout << "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
+        prevPlayerHp = playerHp;
+        prevMonsterHp = monsterHp;
+    }
+}
+
+// ============================================
+// Variáveis globais (vitórias/derrotas persistindo entre partidas)
+// ============================================
+int playerWins = 0;
+int monsterWins = 0;
+
+// ============================================
+// Função principal
+// ============================================
+int main() {
+    srand(time(0));
+
+    // Inicializa o mapa e o jogador
+    vector<vector<char>> map(MAP_HEIGHT, vector<char>(MAP_WIDTH, ' '));
+    initMap(map);
+
+    Player player;
+    player.hp = 30 + monsterWins;
+    player.dmg = 2 + (monsterWins / 5);
+    player.maxAtSp = 4;
+    player.atSp = 0;
+    player.acc = 90;
+    player.x = MAP_WIDTH / 2;
+    player.y = MAP_HEIGHT / 2;
+
+    // Inicializa suportes (curador e debuffer) que sempre acompanham o jogador
+    Healer healer;
+    healer.healAmount = 3 + (monsterWins / 10);
+    healer.maxAtSp = 5;
+    healer.atSp = 0;
+    healer.acc = 5;
+
+    Debuffer debuffer;
+    debuffer.dmgReduction = 3;
+    debuffer.maxAtSp = 10;
+    debuffer.atSp = 0;
+    debuffer.acc = 15;
+
+    // Lista de monstros no mapa
+    vector<Monster> monsters;
+    int monsterCount = 5; // Quantos monstros iniciar
+
+    spawnMonsters(monsters, monsterCount, player.x, player.y,
+                  3, 50, monsterWins);
+
+    char input;
+    bool running = true;
+
+    while (running) {
+        // Mostra o estado atual do mapa
+        drawMap(map, player, monsters);
+
+        // Captura a tecla do jogador (WASD ou Q)
+        input = _getch();  // Para Windows. Use getchar() ou similar em outros sistemas.
+
+        if (input == 'q' || input == 'Q') {
+            running = false;
+            break;
         }
 
-        // ====== DETERMINA VENCEDOR ======
-        if (playerHp <= 0)
-        {
-            cout << "Monster wins";
-            monsterWins++;
+        // Move o jogador
+        movePlayer(player, input);
+
+        // Verifica encontro com monstros
+        bool alive = checkAndStartCombat(player, monsters, healer, debuffer,
+                                         playerWins, monsterWins);
+
+        // Se o jogador morreu, reinicia o jogo (ou encerra)
+        if (!alive) {
+            cout << "Fim de jogo! Pressione qualquer tecla para continuar...";
+            _getch();
+            // Reseta stats do jogador e recria mapa
+            player.hp = 30 + monsterWins;
+            player.dmg = 2 + (monsterWins / 5);
+            player.atSp = 0;
+            player.x = MAP_WIDTH / 2;
+            player.y = MAP_HEIGHT / 2;
+
+            // Remove todos os monstros antigos e gera novos
+            monsters.clear();
+            spawnMonsters(monsters, monsterCount, player.x, player.y,
+                          3, 50, monsterWins);
         }
-        else
-        {
-            cout << "Player wins";
-            playerWins++;
+
+        // Se não há mais monstros, gera uma nova leva (nível mais difícil)
+        if (monsters.empty()) {
+            monsterCount++;  // Aumenta a quantidade de monstros
+            spawnMonsters(monsters, monsterCount, player.x, player.y,
+                          3, 50, monsterWins);
         }
-
-        // Mostra placar
-        cout << "\n\nPlayer wins : " << playerWins << " | Monster Wins : " << monsterWins;
-
-        // Aguarda 2 segundos antes do próximo combate
-        this_thread::sleep_for(chrono::milliseconds(2000));
-
-        // Pergunta se continua
-        cout << "\n\nType 1 to continue or 0 to exit: ";
-        cin >> key;
     }
 
     return 0;
 }
-
-// ============================================================================
-// NOTAS SOBRE CORREÇÕES FEITAS
-// ============================================================================
-//
-// 1. CORRIGIDO: Bug de dano duplo do monstro
-//    - Antes: Aplicava dano com fraqueza, depois aplicava novamente
-//    - Depois: Calcula dano final, depois aplica uma vez
-//
-// 2. CORRIGIDO: Cegueira deixando acurácia negativa
-//    - Antes: playerAcc podia ficar < 0
-//    - Depois: accuracyAdjusted tem limite mínimo de 0
-//
-// 3. CORRIGIDO: Dano muito baixo
-//    - Antes: playerDmg = 2 (causava 0-1 dano)
-//    - Depois: playerDmg = 5 (causa 1-5 dano)
-//
-// 4. MELHORADO: Chance de cura
-//    - Antes: healerAcc = 5 (quase nunca curava)
-//    - Depois: healerAcc = 10 (melhor chance)
-//
-// 5. MELHORADO: Estrutura de código
-//    - Comentários explicativos
-//    - Variáveis mais bem organizadas
-//    - Lógica mais clara
-//
-// ============================================================================

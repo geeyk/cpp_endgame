@@ -40,5 +40,11 @@ const int MAP_HEIGHT = 15;
 
 
 # Funcções extras usadas no trabalho
-## `getch()`:
-É uma função não padrão (declara na header <conio.h>) que lê um único caractere do teclado sem ecoar na tela. É frequentemente usada no final de programas para pausar o console e impedir que a janela feche imediatamente antes do usuário ler a saída. 
+## `_getch()`:
+### Windows
+Para evitar que o usuário tenha que clicar em ***Enter*** toda a vez após uma tecla de movimentação para mover-se, foi utilizada a biblioteca `conio.h`, que lê o caractere imediatamente sem eco na tela.
+### Linux/Mac
+Como eu uso Linux para desenvolver, tive que implementar 2 alternativas para ler o caractere pressionado:
+Foi necessário desabilitar o modo canônico e o eco do terminal usando as funções `tcgetattr` e `tcsetattr` do cabeçalho `<termios.h`.
+Essa adaptação acontece dentro da função `getKeyPress()`.
+## `system("cls")` ou `system("clear")`:

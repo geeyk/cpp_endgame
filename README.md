@@ -48,3 +48,18 @@ Como eu uso Linux para desenvolver, tive que implementar 2 alternativas para ler
 Foi necessário desabilitar o modo canônico e o eco do terminal usando as funções `tcgetattr` e `tcsetattr` do cabeçalho `<termios.h`.
 Essa adaptação acontece dentro da função `getKeyPress()`.
 ## `system("cls")` ou `system("clear")`:
+### `CLS`
+A macro `CLS` é definida como `"cls"` no *Windows* e `"clear"` nos demais sistemas (*Linux* e *Mac*).
+### `system()`
+Foi a mais simples de implementar, mas fui instruido que não é uma solução muito profissional e não é considerada boa prática. Ela roda um comando no terminal, funciona mas é lenta e depende do sistema operacional.
+## `rand()` e `srand()`
+Ambas as funções são da biblioteca `<random>`, que aprendi e entendi na faculdade.
+### `srand(time(0))`
+Inicializa uma seed no gerador usando a hora do sistema, que é obtida através de `time(0)`.
+### `rand() % N`
+Gera um número entre ***0*** e ***N-1***.
+Agora um recado da LLM usada para pesquisa:
+>**Atenção:** `rand()` é uma função antiga da biblioteca C, com qualidade limitada. Em projetos futuros, prefira a biblioteca `<random>` do C++11 (`std::mt19937`, `std::uniform_int_distribution`).
+
+Parece bem mais chato de implementar só de olhar pra forma que ela escreveu, mas vou anotar e tentar na próxima.
+## `std::this_thread::sleep_for`

@@ -37,3 +37,8 @@ O mapa é definido seguindo constantes declaradas nas linhas 77-78 do arquivo [s
 const int MAP_WIDTH  = 30;
 const int MAP_HEIGHT = 15;
 ```
+
+
+# Funcções extras usadas no trabalho
+## `getch()`:
+É uma função não padrão (declara na header <conio.h>) que lê um único caractere do teclado sem ecoar na tela. É frequentemente usada no final de programas para pausar o console e impedir que a janela feche imediatamente antes do usuário ler a saída. 

@@ -21,7 +21,7 @@ M
 P
 ```
 ### Imagem de exemplo:
-<img width="393" height="382" alt="tela do mapa" src="https://github.com/geeyk/cpp_endgame/blob/main/material/tela%20do%20mapa.png?raw=true" />
+![Imagem de exemplo do mapa funcionando, aberto em uma janela do Konsole no Nobara Linux](material/tela_do_mapa.png)
 
 ## Testes do mapa descritos em #2
 - [x] Identificação Visual

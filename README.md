@@ -33,7 +33,7 @@ P
 ### Definição do mapa
 O mapa é definido seguindo constantes declaradas nas linhas 77-78 do arquivo [simulador_II.cpp]()
 
-´´´cpp
+```cpp
 const int MAP_WIDTH  = 30;
 const int MAP_HEIGHT = 15;
 ```

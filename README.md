@@ -22,3 +22,18 @@ P
 ```
 ### Imagem de exemplo:
 <img width="393" height="382" alt="tela do mapa" src="https://github.com/geeyk/cpp_endgame/blob/main/material/tela%20do%20mapa.png?raw=true" />
+
+## Testes do mapa descritos em #2
+- [x] Identificação Visual
+  - [x] Jogador representado por caractere diferente (ex: 'J')
+  - [x] Monstros representados por caractere diferente (ex: 'M')
+  - [x] Terreno vazio claramente identificado
+     
+## Como funciona:
+### Definição do mapa
+O mapa é definido seguindo constantes declaradas nas linhas 77-78 do arquivo [simulador_II.cpp]()
+
+´´´cpp
+const int MAP_WIDTH  = 30;
+const int MAP_HEIGHT = 15;
+```

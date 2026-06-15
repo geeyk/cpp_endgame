@@ -4,6 +4,7 @@
 #include <chrono>
 #include <thread>
 #include <vector>
+#include <algorithm>
 
 #ifdef _WIN32
     #include <conio.h>
@@ -17,15 +18,61 @@
 using namespace std;
 
 // ============================================
-// Variáveis globais (vitórias/derrotas)
+// Variáveis globais
 // ============================================
 int playerWins = 0;
 int monsterWins = 0;
 
+struct KilledMonster {
+    int hp;        // HP máximo original
+    int dmg;       // Dano máximo
+    int atkSpeed;  // maxAtSp (velocidade de ataque)
+};
+vector<KilledMonster> killedMonsters;
+
+// ============================================
+// CONSTANTES DE BALANCEAMENTO
+// ============================================
+const int MAP_WIDTH      = 30;
+const int MAP_HEIGHT     = 15;
+const char BORDER_CHAR   = '+';
+const char FLOOR_CHAR    = '.';
+const char PLAYER_CHAR   = 'P';
+const char MONSTER_CHAR  = 'M';
+const int INITIAL_MONSTER_COUNT = 5;
+
+const int PLAYER_BASE_HP      = 30;
+const int PLAYER_HP_PER_MONSTER_WIN = 2;
+const int PLAYER_BASE_DMG     = 5;
+const int PLAYER_DMG_PER_WIN  = 1;
+const int PLAYER_ATK_SPEED    = 4;
+const int PLAYER_BASE_ACC     = 85;
+
+const int MONSTER_BASE_HP       = 30;
+const int MONSTER_HP_PER_WIN    = 3;
+const int MONSTER_BASE_DMG      = 6;
+const int MONSTER_DMG_PER_WIN   = 1;
+const int MONSTER_ATK_SPEED     = 10;
+const int MONSTER_BASE_ACC      = 80;
+const int MONSTER_BLIND_CHANCE  = 30;
+const int MONSTER_BLIND_PER_WIN = 2;
+const int BLIND_PENALTY         = 15;
+
+const int HEALER_BASE_AMOUNT = 5;
+const int HEALER_AMOUNT_PER_WIN = 1;
+const int HEALER_ATK_SPEED   = 5;
+const int HEALER_BASE_ACC    = 20;
+
+const int DEBUFF_BASE_REDUCTION   = 4;
+const int DEBUFF_REDUCTION_PER_WIN = 1;
+const int DEBUFF_ATK_SPEED        = 10;
+const int DEBUFF_BASE_ACC         = 25;
+
+const int COMBAT_DELAY_MS = 70;
+
 // ============================================
 // Estruturas
 // ============================================
-
 struct Player {
     int hp;
     int dmg;
@@ -43,7 +90,6 @@ struct Monster {
     int acc;
     int blindnessChance;
     int x, y;
-    char symbol;
 };
 
 struct Healer {
@@ -72,14 +118,15 @@ struct MessageFlags {
 };
 
 // ============================================
-// Constantes do mapa
+// Protótipos
 // ============================================
-const int MAP_WIDTH  = 30;
-const int MAP_HEIGHT = 15;
-
-// ============================================
-// Protótipos das funções de combate
-// ============================================
+char getKeyPress();
+void initMap(vector<vector<char>>& map);
+void drawMap(const vector<vector<char>>& baseMap, const Player& player, const vector<Monster>& monsters);
+void spawnMonsters(vector<Monster>& monsters, int count, int playerX, int playerY);
+void movePlayer(Player& player, char direction);
+bool checkAndStartCombat(Player& player, vector<Monster>& monsters, Healer& healer, Debuffer& debuffer);
+void showKillList();
 void playerAttack(Player& player, Monster& monster, StatusEffects& status, MessageFlags& msg);
 void debufferAction(Debuffer& deb, StatusEffects& status, MessageFlags& msg);
 void monsterAttack(Monster& monster, Player& player, StatusEffects& status, MessageFlags& msg, int debuffReduction);
@@ -87,7 +134,7 @@ void healerAction(Healer& healer, Player& player, MessageFlags& msg);
 void printScreen(int playerHp, int monsterHp, int& prevPlayerHp, int& prevMonsterHp, MessageFlags& msg);
 
 // ============================================
-// Função para ler uma tecla sem Enter (cross-platform)
+// Captura de tecla cross-platform
 // ============================================
 char getKeyPress() {
     #ifdef _WIN32
@@ -108,14 +155,13 @@ char getKeyPress() {
 // ============================================
 // Funções do mapa
 // ============================================
-
 void initMap(vector<vector<char>>& map) {
     for (int y = 0; y < MAP_HEIGHT; y++) {
         for (int x = 0; x < MAP_WIDTH; x++) {
             if (y == 0 || y == MAP_HEIGHT-1 || x == 0 || x == MAP_WIDTH-1)
-                map[y][x] = '+';
+                map[y][x] = BORDER_CHAR;
             else
-                map[y][x] = '.';
+                map[y][x] = FLOOR_CHAR;
         }
     }
 }
@@ -126,27 +172,24 @@ void drawMap(const vector<vector<char>>& baseMap, const Player& player,
 
     for (auto& m : monsters) {
         if (m.y > 0 && m.y < MAP_HEIGHT-1 && m.x > 0 && m.x < MAP_WIDTH-1)
-            screen[m.y][m.x] = 'M';
+            screen[m.y][m.x] = MONSTER_CHAR;
     }
 
     if (player.y > 0 && player.y < MAP_HEIGHT-1 && player.x > 0 && player.x < MAP_WIDTH-1)
-        screen[player.y][player.x] = 'P';
+        screen[player.y][player.x] = PLAYER_CHAR;
 
     system(CLS);
 
     for (auto& row : screen) {
-        for (char c : row) {
-            cout << c;
-        }
+        for (char c : row) cout << c;
         cout << endl;
     }
 
-    cout << "\nWASD: mover | Q: sair\n";
-    cout << "Vida: " << player.hp << " | Vitorias: " << playerWins << " | Derrotas: " << monsterWins << endl;
+    cout << "\nWASD: mover | L: lista de mortos | Q: sair\n";
+    cout << "HP: " << player.hp << " | V: " << playerWins << " | D: " << monsterWins << endl;
 }
 
-void spawnMonsters(vector<Monster>& monsters, int count, int playerX, int playerY,
-                   int baseDmg, int baseHp, int /*monsterWinsArg*/) {
+void spawnMonsters(vector<Monster>& monsters, int count, int playerX, int playerY) {
     for (int i = 0; i < count; i++) {
         int x, y;
         bool valid;
@@ -168,13 +211,12 @@ void spawnMonsters(vector<Monster>& monsters, int count, int playerX, int player
         Monster m;
         m.x = x;
         m.y = y;
-        m.symbol = 'M';
-        m.hp   = baseHp + monsterWins * 2;
-        m.dmg  = baseDmg + (monsterWins / 5);
-        m.maxAtSp = 10;
+        m.hp   = MONSTER_BASE_HP + monsterWins * MONSTER_HP_PER_WIN;
+        m.dmg  = MONSTER_BASE_DMG + monsterWins * MONSTER_DMG_PER_WIN;
+        m.maxAtSp = MONSTER_ATK_SPEED;
         m.atSp = 0;
-        m.acc  = 90;
-        m.blindnessChance = 40 + monsterWins;
+        m.acc  = MONSTER_BASE_ACC;
+        m.blindnessChance = MONSTER_BLIND_CHANCE + monsterWins * MONSTER_BLIND_PER_WIN;
 
         monsters.push_back(m);
     }
@@ -194,13 +236,17 @@ void movePlayer(Player& player, char direction) {
     }
 }
 
+// ============================================
+// Combate + registro de kill list
+// ============================================
 bool checkAndStartCombat(Player& player, vector<Monster>& monsters,
-                         Healer& healer, Debuffer& debuffer,
-                         int& /*playerWinsRef*/, int& /*monsterWinsRef*/) {
+                         Healer& healer, Debuffer& debuffer) {
     for (auto it = monsters.begin(); it != monsters.end(); ++it) {
         if (it->x == player.x && it->y == player.y) {
             cout << "Um monstro apareceu! Prepare-se para a batalha!" << endl;
             this_thread::sleep_for(chrono::milliseconds(500));
+
+            int originalMonsterHP = it->hp;
 
             player.atSp = 0;
             it->atSp = 0;
@@ -212,14 +258,16 @@ bool checkAndStartCombat(Player& player, vector<Monster>& monsters,
 
             while (player.hp >= 1 && it->hp >= 1) {
                 playerAttack(player, *it, status, msg);
-                if (it->hp <= 0) break;
+                if (it->hp <= 0) {
+                    printScreen(player.hp, it->hp, prevPlayerHp, prevMonsterHp, msg);
+                    break;
+                }
 
                 debufferAction(debuffer, status, msg);
                 monsterAttack(*it, player, status, msg, debuffer.dmgReduction);
                 healerAction(healer, player, msg);
-
                 printScreen(player.hp, it->hp, prevPlayerHp, prevMonsterHp, msg);
-                this_thread::sleep_for(chrono::milliseconds(70));
+                this_thread::sleep_for(chrono::milliseconds(COMBAT_DELAY_MS));
             }
 
             if (player.hp <= 0) {
@@ -230,6 +278,13 @@ bool checkAndStartCombat(Player& player, vector<Monster>& monsters,
             } else {
                 cout << "Voce venceu o monstro!" << endl;
                 playerWins++;
+
+                KilledMonster km;
+                km.hp = originalMonsterHP;
+                km.dmg = it->dmg;
+                km.atkSpeed = it->maxAtSp;
+                killedMonsters.push_back(km);
+
                 monsters.erase(it);
                 this_thread::sleep_for(chrono::milliseconds(1000));
                 return true;
@@ -240,18 +295,80 @@ bool checkAndStartCombat(Player& player, vector<Monster>& monsters,
 }
 
 // ============================================
-// Implementação das funções de combate
+// Lista de monstros mortos (pausa)
 // ============================================
+void showKillList() {
+    if (killedMonsters.empty()) {
+        cout << "Nenhum monstro foi derrotado ainda.\n";
+        cout << "Pressione qualquer tecla para voltar...";
+        getKeyPress();
+        return;
+    }
 
+    vector<KilledMonster> list = killedMonsters;
+    sort(list.begin(), list.end(), [](const KilledMonster& a, const KilledMonster& b) {
+        return a.hp > b.hp;
+    });
+    int sortMode = 1;
+
+    bool viewing = true;
+    while (viewing) {
+        system(CLS);
+        cout << "=== MONSTROS DERROTADOS ===\n";
+        cout << "Ordenado por: ";
+        switch (sortMode) {
+            case 1: cout << "HP (maior -> menor)\n"; break;
+            case 2: cout << "DANO (maior -> menor)\n"; break;
+            case 3: cout << "VELOCIDADE (menor maxAtSp -> maior)\n"; break;
+        }
+        cout << "Total: " << list.size() << " monstros\n\n";
+
+        cout << " HP | DMG | Vel (maxAtSp)\n";
+        cout << "----+-----+--------------\n";
+        for (const auto& m : list) {
+            printf("%3d | %3d |      %3d\n", m.hp, m.dmg, m.atkSpeed);
+        }
+
+        cout << "\n[1] Ordenar por HP\n";
+        cout << "[2] Ordenar por Dano\n";
+        cout << "[3] Ordenar por Velocidade de ataque\n";
+        cout << "[Q] Voltar ao jogo\n";
+        cout << "Escolha: ";
+
+        char choice = getKeyPress();
+        if (choice == '1') {
+            sort(list.begin(), list.end(), [](const KilledMonster& a, const KilledMonster& b) {
+                return a.hp > b.hp;
+            });
+            sortMode = 1;
+        } else if (choice == '2') {
+            sort(list.begin(), list.end(), [](const KilledMonster& a, const KilledMonster& b) {
+                return a.dmg > b.dmg;
+            });
+            sortMode = 2;
+        } else if (choice == '3') {
+            sort(list.begin(), list.end(), [](const KilledMonster& a, const KilledMonster& b) {
+                return a.atkSpeed < b.atkSpeed;
+            });
+            sortMode = 3;
+        } else if (choice == 'q' || choice == 'Q') {
+            viewing = false;
+        }
+    }
+}
+
+// ============================================
+// Ações de combate
+// ============================================
 void playerAttack(Player& player, Monster& monster, StatusEffects& status, MessageFlags& msg) {
     if (player.atSp == player.maxAtSp) {
         int effectiveAcc = player.acc;
         if (status.blindedActive) {
-            effectiveAcc -= monster.dmg * 3;
+            effectiveAcc -= BLIND_PENALTY;
             msg.showBlinded = true;
             status.blindedActive = false;
         }
-        if ((rand() % 100) <= effectiveAcc) {
+        if ((rand() % 100) < effectiveAcc) {
             monster.hp -= rand() % player.dmg;
         }
         player.atSp = 0;
@@ -262,7 +379,7 @@ void playerAttack(Player& player, Monster& monster, StatusEffects& status, Messa
 
 void debufferAction(Debuffer& deb, StatusEffects& status, MessageFlags& msg) {
     if (deb.atSp == deb.maxAtSp) {
-        if ((rand() % 100) <= deb.acc) {
+        if ((rand() % 100) < deb.acc) {
             status.weakenedActive = true;
             msg.showWeakened = true;
         }
@@ -274,8 +391,9 @@ void debufferAction(Debuffer& deb, StatusEffects& status, MessageFlags& msg) {
 
 void monsterAttack(Monster& monster, Player& player, StatusEffects& status,
                    MessageFlags& msg, int debuffReduction) {
+    (void)msg;
     if (monster.atSp == monster.maxAtSp) {
-        if ((rand() % 100) <= monster.acc) {
+        if ((rand() % 100) < monster.acc) {
             int damage = rand() % monster.dmg;
             if (status.weakenedActive) {
                 damage -= debuffReduction;
@@ -284,7 +402,7 @@ void monsterAttack(Monster& monster, Player& player, StatusEffects& status,
             }
             player.hp -= damage;
         }
-        if ((rand() % 100) <= monster.blindnessChance) {
+        if ((rand() % 100) < monster.blindnessChance) {
             status.blindedActive = true;
         }
         monster.atSp = 0;
@@ -295,7 +413,7 @@ void monsterAttack(Monster& monster, Player& player, StatusEffects& status,
 
 void healerAction(Healer& healer, Player& player, MessageFlags& msg) {
     if (healer.atSp == healer.maxAtSp) {
-        if ((rand() % 100) <= healer.acc) {
+        if ((rand() % 100) < healer.acc) {
             player.hp += healer.healAmount;
             msg.showHealed = true;
         }
@@ -313,11 +431,11 @@ void printScreen(int playerHp, int monsterHp, int& prevPlayerHp, int& prevMonste
         cout << "Player  : ";
         for (int i = 0; i < playerHp; i++) cout << "o";
         if (msg.showHealed) {
-            cout << "    Player was healed for " << (playerHp - prevPlayerHp) << "!";
+            cout << "   +" << (playerHp - prevPlayerHp) << " HP";
             msg.showHealed = false;
         }
         if (msg.showBlinded) {
-            cout << "    Player is blinded!";
+            cout << "   BLINDED!";
             msg.showBlinded = false;
         }
         cout << endl;
@@ -325,7 +443,7 @@ void printScreen(int playerHp, int monsterHp, int& prevPlayerHp, int& prevMonste
         cout << "Monster : ";
         for (int i = 0; i < monsterHp; i++) cout << "o";
         if (msg.showWeakened) {
-            cout << "   Monster was weakened";
+            cout << "   WEAKENED";
             msg.showWeakened = false;
         }
         cout << "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
@@ -344,65 +462,66 @@ int main() {
     initMap(map);
 
     Player player;
-    player.hp = 30 + monsterWins;
-    player.dmg = 2 + (monsterWins / 5);
-    player.maxAtSp = 4;
+    player.hp = PLAYER_BASE_HP + monsterWins * PLAYER_HP_PER_MONSTER_WIN;
+    player.dmg = PLAYER_BASE_DMG + playerWins * PLAYER_DMG_PER_WIN;
+    player.maxAtSp = PLAYER_ATK_SPEED;
     player.atSp = 0;
-    player.acc = 90;
+    player.acc = PLAYER_BASE_ACC;
     player.x = MAP_WIDTH / 2;
     player.y = MAP_HEIGHT / 2;
 
     Healer healer;
-    healer.healAmount = 3 + (monsterWins / 10);
-    healer.maxAtSp = 5;
+    healer.healAmount = HEALER_BASE_AMOUNT + playerWins * HEALER_AMOUNT_PER_WIN;
+    healer.maxAtSp = HEALER_ATK_SPEED;
     healer.atSp = 0;
-    healer.acc = 5;
+    healer.acc = HEALER_BASE_ACC;
 
     Debuffer debuffer;
-    debuffer.dmgReduction = 3;
-    debuffer.maxAtSp = 10;
+    debuffer.dmgReduction = DEBUFF_BASE_REDUCTION + playerWins * DEBUFF_REDUCTION_PER_WIN;
+    debuffer.maxAtSp = DEBUFF_ATK_SPEED;
     debuffer.atSp = 0;
-    debuffer.acc = 15;
+    debuffer.acc = DEBUFF_BASE_ACC;
 
     vector<Monster> monsters;
-    int monsterCount = 5;
+    spawnMonsters(monsters, INITIAL_MONSTER_COUNT, player.x, player.y);
 
-    spawnMonsters(monsters, monsterCount, player.x, player.y, 3, 50, monsterWins);
-
-    char input;
     bool running = true;
-
     while (running) {
         drawMap(map, player, monsters);
-
-        input = getKeyPress();  // Agora é cross-platform
+        char input = getKeyPress();
 
         if (input == 'q' || input == 'Q') {
             running = false;
             break;
         }
 
+        if (input == 'l' || input == 'L') {
+            showKillList();
+            continue;
+        }
+
         movePlayer(player, input);
 
-        bool alive = checkAndStartCombat(player, monsters, healer, debuffer,
-                                         playerWins, monsterWins);
+        bool alive = checkAndStartCombat(player, monsters, healer, debuffer);
 
         if (!alive) {
             cout << "Fim de jogo! Pressione qualquer tecla para continuar...";
             getKeyPress();
-            player.hp = 30 + monsterWins;
-            player.dmg = 2 + (monsterWins / 5);
+            player.hp = PLAYER_BASE_HP + monsterWins * PLAYER_HP_PER_MONSTER_WIN;
+            player.dmg = PLAYER_BASE_DMG + playerWins * PLAYER_DMG_PER_WIN;
             player.atSp = 0;
             player.x = MAP_WIDTH / 2;
             player.y = MAP_HEIGHT / 2;
 
+            healer.healAmount = HEALER_BASE_AMOUNT + playerWins * HEALER_AMOUNT_PER_WIN;
+            debuffer.dmgReduction = DEBUFF_BASE_REDUCTION + playerWins * DEBUFF_REDUCTION_PER_WIN;
+
             monsters.clear();
-            spawnMonsters(monsters, monsterCount, player.x, player.y, 3, 50, monsterWins);
+            spawnMonsters(monsters, INITIAL_MONSTER_COUNT, player.x, player.y);
         }
 
         if (monsters.empty()) {
-            monsterCount++;
-            spawnMonsters(monsters, monsterCount, player.x, player.y, 3, 50, monsterWins);
+            spawnMonsters(monsters, INITIAL_MONSTER_COUNT + playerWins, player.x, player.y);
         }
     }
 
